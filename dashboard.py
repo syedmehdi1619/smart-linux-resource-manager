@@ -23,6 +23,8 @@ from matplotlib.figure import Figure
 # ---------------------------------------------------------------------------
 from cpu_monitor import get_cpu_stats, check_cpu_alert
 from process_manager import ProcessManager
+from ram_monitor import get_ram_stats, check_ram_alert
+from disk_monitor import get_disk_stats, check_disk_alert, get_disk_partitions
 
 # ---------------------------------------------------------------------------
 # Color Palette – Dark Theme
@@ -80,8 +82,12 @@ class SLRMDashboard:
 
     # History length for CPU graph (last 60 readings ≈ 60 s)
     CPU_HISTORY_LEN = 60
+    RAM_HISTORY_LEN = 60
+    DISK_HISTORY_LEN = 60
     # Refresh interval in milliseconds
     CPU_REFRESH_MS = 1000
+    RAM_REFRESH_MS = 1000
+    DISK_REFRESH_MS = 5000
     PROCESS_REFRESH_MS = 3000
 
     # ------------------------------------------------------------------
@@ -103,6 +109,10 @@ class SLRMDashboard:
         # ---- Data stores -------------------------------------------------
         self.cpu_history = deque([0.0] * self.CPU_HISTORY_LEN,
                                 maxlen=self.CPU_HISTORY_LEN)
+        self.ram_history = deque([0.0] * self.RAM_HISTORY_LEN,
+                                maxlen=self.RAM_HISTORY_LEN)
+        self.disk_history = deque([0.0] * self.DISK_HISTORY_LEN,
+                                 maxlen=self.DISK_HISTORY_LEN)
         self.cpu_primed = False  # Track whether first CPU reading is primed
         self.process_manager = ProcessManager()
         self.current_sort = "cpu"
@@ -118,6 +128,8 @@ class SLRMDashboard:
 
         # ---- Start periodic updates -------------------------------------
         self._schedule_cpu_update()
+        self._schedule_ram_update()
+        self._schedule_disk_update()
         self._schedule_process_update()
 
     # ------------------------------------------------------------------
@@ -398,34 +410,68 @@ class SLRMDashboard:
                                              padx=12, pady=(4, 12))
 
     # ==================================================================
-    #  PAGE: RAM Monitoring (placeholder)
+    #  PAGE: RAM Monitoring
     # ==================================================================
     def _build_ram_page(self):
         page = tk.Frame(self.main_area, bg=COLORS["bg_dark"])
         self.pages["RAM Monitoring"] = page
 
+        # Header
         hdr = tk.Frame(page, bg=COLORS["bg_dark"])
         hdr.pack(fill=tk.X, padx=28, pady=(22, 6))
         tk.Label(hdr, text="💾  RAM Monitoring", font=("Segoe UI", 22, "bold"),
                  fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(side=tk.LEFT)
 
-        placeholder = tk.Frame(page, bg=COLORS["bg_card"],
+        # Alert label
+        self.ram_alert_label = tk.Label(
+            hdr, text="", font=("Segoe UI", 11, "bold"),
+            fg=COLORS["accent_green"], bg=COLORS["bg_dark"])
+        self.ram_alert_label.pack(side=tk.RIGHT, padx=12)
+
+        # Stats cards row
+        stats_frame = tk.Frame(page, bg=COLORS["bg_dark"])
+        stats_frame.pack(fill=tk.X, padx=24, pady=6)
+        for i in range(4):
+            stats_frame.columnconfigure(i, weight=1, uniform="ramstat")
+
+        self.ram_labels = {}
+        stat_defs = [
+            ("Usage",     "—", COLORS["accent_green"]),
+            ("Total",     "—", COLORS["accent_blue"]),
+            ("Used",      "—", COLORS["accent_peach"]),
+            ("Available", "—", COLORS["accent_teal"]),
+        ]
+        for i, (name, default, color) in enumerate(stat_defs):
+            frame = tk.Frame(stats_frame, bg=COLORS["bg_card"],
+                             highlightbackground=COLORS["border"],
+                             highlightthickness=1)
+            frame.grid(row=0, column=i, padx=6, pady=6, sticky="nsew")
+            tk.Label(frame, text=name, font=("Segoe UI", 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(
+                pady=(12, 2))
+            lbl = tk.Label(frame, text=default, font=("Segoe UI", 20, "bold"),
+                           fg=color, bg=COLORS["bg_card"])
+            lbl.pack(pady=(0, 12))
+            self.ram_labels[name] = lbl
+
+        # RAM History Graph
+        graph_frame = tk.Frame(page, bg=COLORS["bg_card"],
                                highlightbackground=COLORS["border"],
                                highlightthickness=1)
-        placeholder.pack(expand=True, padx=80, pady=60)
+        graph_frame.pack(fill=tk.BOTH, expand=True, padx=28, pady=(10, 24))
 
-        tk.Label(placeholder, text="🔧", font=("Segoe UI", 48),
-                 fg=COLORS["accent_green"], bg=COLORS["bg_card"]).pack(pady=(40, 10))
-        tk.Label(placeholder, text="RAM Monitoring Module",
-                 font=("Segoe UI", 18, "bold"),
-                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack()
-        tk.Label(placeholder,
-                 text="RAM monitoring module will be integrated soon.\n\n"
-                      "Once Member 2 completes ram_monitor.py, its functions\n"
-                      "will be imported here to display live RAM statistics,\n"
-                      "usage history graph, and memory alerts.",
-                 font=("Segoe UI", 11), fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_card"], justify="center").pack(padx=40, pady=(10, 40))
+        tk.Label(graph_frame, text="  📈  Live RAM Usage History",
+                 font=("Segoe UI", 12, "bold"),
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                 anchor="w").pack(fill=tk.X, padx=16, pady=(12, 0))
+
+        self.ram_fig = Figure(figsize=(8, 3), dpi=100,
+                              facecolor=COLORS["graph_bg"])
+        self.ram_ax = self.ram_fig.add_subplot(111)
+        self._style_axis(self.ram_ax, ylabel="RAM %")
+        self.ram_canvas = FigureCanvasTkAgg(self.ram_fig, master=graph_frame)
+        self.ram_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True,
+                                             padx=12, pady=(4, 12))
 
     # ==================================================================
     #  PAGE: Disk Monitoring (placeholder)
