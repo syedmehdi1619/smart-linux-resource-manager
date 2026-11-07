@@ -14,10 +14,15 @@ SLRM/
 ├── dashboard.py           # GUI & Dashboard module (Member 4)
 ├── cpu_monitor.py         # CPU Monitoring module (Member 1)
 ├── process_manager.py     # Process Management module (Member 3)
-├── ram_monitor.py         # RAM Monitoring (Member 2 – upcoming)
-├── disk_monitor.py        # Disk Monitoring (Member 2 – upcoming)
-├── requirements.txt       # Python dependencies
-└── README.md              # This file
+├── ram_monitor.py         # RAM Monitoring module (Member 2)
+├── disk_monitor.py        # Disk Monitoring module (Member 2)
+├── requirements.txt       # Python dependencies (merged)
+├── requirementsdashboard.txt # Legacy dashboard dependencies (redundant)
+├── README.md              # Project documentation
+└── tests/                 # Unit tests
+    ├── test_process_manager.py
+    ├── test_ram_monitor.py
+    └── test_disk_monitor.py
 ```
 
 ---
@@ -68,7 +73,7 @@ python main.py
 ### Dashboard
 - Live CPU usage percentage card
 - Running process count card
-- RAM & Disk placeholder cards (awaiting integration)
+- Live RAM & Disk usage percentage cards with warning alerts
 - Real-time CPU usage history graph (last 60 seconds)
 - Quick navigation to all sections
 
@@ -88,7 +93,8 @@ python main.py
 - Auto-refresh every 3 seconds
 
 ### RAM & Disk Monitoring
-- Placeholder pages ready for future module integration
+- **RAM Monitoring**: Real-time RAM usage percentage, total, used, and available space in GB, live 60-second RAM usage history graph, and high RAM usage warning alerts (> 85%).
+- **Disk Monitoring**: System root storage statistics (total, used, free space in GB and usage %), low disk space alert (> 90%), and real-time partition table showing device, mountpoint, filesystem, and capacity breakdown.
 
 ---
 
@@ -134,43 +140,24 @@ self.process_manager = ProcessManager()
 
 ---
 
-## 🔌 How to Integrate RAM & Disk Modules Later
+## 🔌 Integration Architecture for RAM & Disk Modules
 
-When Member 2 completes `ram_monitor.py` and `disk_monitor.py`, follow these steps:
+The RAM and Disk modules developed by Member 2 are fully integrated into the SLRM dashboard:
 
-### 1. Add the Module Files
-
-Place `ram_monitor.py` and `disk_monitor.py` in the project root alongside the existing modules.
-
-### 2. Import in dashboard.py
-
-Add imports at the top of `dashboard.py`:
-
+### 1. Module Functions
 ```python
-from ram_monitor import get_ram_stats  # (or whatever the function names are)
-from disk_monitor import get_disk_stats
+from ram_monitor import get_ram_stats, check_ram_alert
+from disk_monitor import get_disk_stats, check_disk_alert, get_disk_partitions
 ```
 
-### 3. Update the RAM Page
+- **`get_ram_stats()`**: Returns a dictionary with `usage`, `total_gb`, `used_gb`, and `available_gb` (calculated with `1024**3`). Polled every 1 second by `_schedule_ram_update()`.
+- **`check_ram_alert(usage)`**: Returns a status or alert string depending on whether RAM usage exceeds the 85.0% threshold.
+- **`get_disk_stats()`**: Returns a dictionary with `path`, `usage`, `total_gb`, `used_gb`, and `free_gb`. Polled every 5 seconds by `_schedule_disk_update()`.
+- **`check_disk_alert(usage)`**: Returns a status or alert string depending on whether disk usage exceeds the 90.0% threshold.
+- **`get_disk_partitions()`**: Returns active, non-pseudo partitions (filtering out tmpfs, squashfs, snap, and loop mounts on Linux) to populate the partitions table in the Disk Monitoring view.
 
-In the `_build_ram_page()` method:
-- Replace the placeholder content with stat labels (similar to the CPU page)
-- Add a Matplotlib graph for RAM usage history
-- Create a `_schedule_ram_update()` method similar to `_schedule_cpu_update()`
-
-### 4. Update the Disk Page
-
-In the `_build_disk_page()` method:
-- Replace the placeholder content with partition info and usage bars
-- Create a `_schedule_disk_update()` method if live updates are needed
-
-### 5. Update Dashboard Cards
-
-In `_schedule_cpu_update()` or a new update method:
-- Update `self.dash_ram_card` with live RAM percentage
-- Update `self.dash_disk_card` with live disk usage percentage
-
-The GUI is designed to be modular – each page is an independent frame, and new update loops can be added without affecting existing ones.
+### 2. Standalone Plotting Functions
+- `plot_live_ram_history()` in `ram_monitor.py` and `plot_disk_usage()` in `disk_monitor.py` are standalone CLI/testing tools and are intentionally **not** invoked in the GUI thread to ensure non-blocking UI responsiveness. Instead, Tkinter's `FigureCanvasTkAgg` and non-blocking `root.after()` loops render the embedded graphs.
 
 ---
 

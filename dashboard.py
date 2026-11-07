@@ -474,34 +474,93 @@ class SLRMDashboard:
                                              padx=12, pady=(4, 12))
 
     # ==================================================================
-    #  PAGE: Disk Monitoring (placeholder)
+    #  PAGE: Disk Monitoring
     # ==================================================================
     def _build_disk_page(self):
         page = tk.Frame(self.main_area, bg=COLORS["bg_dark"])
         self.pages["Disk Monitoring"] = page
 
+        # Header
         hdr = tk.Frame(page, bg=COLORS["bg_dark"])
         hdr.pack(fill=tk.X, padx=28, pady=(22, 6))
         tk.Label(hdr, text="💿  Disk Monitoring", font=("Segoe UI", 22, "bold"),
                  fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(side=tk.LEFT)
 
-        placeholder = tk.Frame(page, bg=COLORS["bg_card"],
-                               highlightbackground=COLORS["border"],
-                               highlightthickness=1)
-        placeholder.pack(expand=True, padx=80, pady=60)
+        # Alert label
+        self.disk_alert_label = tk.Label(
+            hdr, text="", font=("Segoe UI", 11, "bold"),
+            fg=COLORS["accent_green"], bg=COLORS["bg_dark"])
+        self.disk_alert_label.pack(side=tk.RIGHT, padx=12)
 
-        tk.Label(placeholder, text="🔧", font=("Segoe UI", 48),
-                 fg=COLORS["accent_peach"], bg=COLORS["bg_card"]).pack(pady=(40, 10))
-        tk.Label(placeholder, text="Disk Monitoring Module",
-                 font=("Segoe UI", 18, "bold"),
-                 fg=COLORS["text_primary"], bg=COLORS["bg_card"]).pack()
-        tk.Label(placeholder,
-                 text="Disk monitoring module will be integrated soon.\n\n"
-                      "Once Member 2 completes disk_monitor.py, its functions\n"
-                      "will be imported here to display disk partitions,\n"
-                      "usage statistics, and I/O counters.",
-                 font=("Segoe UI", 11), fg=COLORS["text_secondary"],
-                 bg=COLORS["bg_card"], justify="center").pack(padx=40, pady=(10, 40))
+        # Stats cards row
+        stats_frame = tk.Frame(page, bg=COLORS["bg_dark"])
+        stats_frame.pack(fill=tk.X, padx=24, pady=6)
+        for i in range(4):
+            stats_frame.columnconfigure(i, weight=1, uniform="diskstat")
+
+        self.disk_labels = {}
+        stat_defs = [
+            ("Usage", "—", COLORS["accent_peach"]),
+            ("Total", "—", COLORS["accent_blue"]),
+            ("Used",  "—", COLORS["accent_red"]),
+            ("Free",  "—", COLORS["accent_green"]),
+        ]
+        for i, (name, default, color) in enumerate(stat_defs):
+            frame = tk.Frame(stats_frame, bg=COLORS["bg_card"],
+                             highlightbackground=COLORS["border"],
+                             highlightthickness=1)
+            frame.grid(row=0, column=i, padx=6, pady=6, sticky="nsew")
+            tk.Label(frame, text=name, font=("Segoe UI", 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"]).pack(
+                pady=(12, 2))
+            lbl = tk.Label(frame, text=default, font=("Segoe UI", 20, "bold"),
+                           fg=color, bg=COLORS["bg_card"])
+            lbl.pack(pady=(0, 12))
+            self.disk_labels[name] = lbl
+
+        # Lower section: Partitions Treeview table
+        part_frame = tk.Frame(page, bg=COLORS["bg_card"],
+                              highlightbackground=COLORS["border"],
+                              highlightthickness=1)
+        part_frame.pack(fill=tk.BOTH, expand=True, padx=28, pady=(10, 24))
+
+        tk.Label(part_frame, text="  📁  Disk Partitions",
+                 font=("Segoe UI", 12, "bold"),
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                 anchor="w").pack(fill=tk.X, padx=16, pady=(12, 8))
+
+        columns = ("device", "mountpoint", "fstype", "total_gb", "used_gb", "free_gb", "usage")
+        col_headings = {
+            "device":     "Device",
+            "mountpoint": "Mount Point",
+            "fstype":     "File System",
+            "total_gb":   "Total (GB)",
+            "used_gb":    "Used (GB)",
+            "free_gb":    "Free (GB)",
+            "usage":      "Usage %",
+        }
+        col_widths = {
+            "device": 140, "mountpoint": 140, "fstype": 100,
+            "total_gb": 90, "used_gb": 90, "free_gb": 90, "usage": 90,
+        }
+
+        table_container = tk.Frame(part_frame, bg=COLORS["bg_card"])
+        table_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+
+        self.disk_tree = ttk.Treeview(
+            table_container, columns=columns, show="headings",
+            style="Dark.Treeview", selectmode="browse")
+
+        for col in columns:
+            self.disk_tree.heading(col, text=col_headings[col])
+            anchor = "w" if col in ("device", "mountpoint") else "center"
+            self.disk_tree.column(col, width=col_widths[col], anchor=anchor, minwidth=60)
+
+        scrollbar = ttk.Scrollbar(table_container, orient=tk.VERTICAL,
+                                  command=self.disk_tree.yview)
+        self.disk_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.disk_tree.pack(fill=tk.BOTH, expand=True)
 
     # ==================================================================
     #  PAGE: Process Manager
@@ -668,7 +727,7 @@ class SLRMDashboard:
             "──────────────────────────────────────\n\n"
             "Team Contributions:\n\n"
             "   Member 1  –  CPU Monitoring Module\n"
-            "   Member 2  –  RAM & Disk Monitoring (Upcoming)\n"
+            "   Member 2  –  RAM & Disk Monitoring Module\n"
             "   Member 3  –  Process Management Module\n"
             "   Member 4  –  GUI & Dashboard Integration\n\n"
             "──────────────────────────────────────\n\n"
@@ -682,12 +741,14 @@ class SLRMDashboard:
     # ══════════════════════════════════════════════════════════════════
     #  GRAPH STYLING HELPER
     # ══════════════════════════════════════════════════════════════════
-    def _style_axis(self, ax):
+    def _style_axis(self, ax, ylabel="CPU %", max_len=None):
         """Apply dark-themed styling to a Matplotlib axis."""
+        if max_len is None:
+            max_len = self.CPU_HISTORY_LEN
         ax.set_facecolor(COLORS["graph_bg"])
-        ax.set_xlim(0, self.CPU_HISTORY_LEN)
+        ax.set_xlim(0, max_len)
         ax.set_ylim(0, 100)
-        ax.set_ylabel("CPU %", color=COLORS["text_secondary"], fontsize=9)
+        ax.set_ylabel(ylabel, color=COLORS["text_secondary"], fontsize=9)
         ax.set_xlabel("Time (seconds ago)", color=COLORS["text_secondary"],
                       fontsize=9)
         ax.tick_params(colors=COLORS["text_secondary"], labelsize=8)
@@ -695,14 +756,20 @@ class SLRMDashboard:
             spine.set_color(COLORS["border"])
         ax.grid(True, color=COLORS["border"], alpha=0.3, linestyle="--")
 
-    def _update_graph(self, ax, canvas, fig):
-        """Redraw a CPU history graph on the given axis."""
+    def _update_graph(self, ax, canvas, fig, history=None, ylabel="CPU %", line_color=None, fill_color=None):
+        """Redraw a history graph on the given axis."""
+        if history is None:
+            history = self.cpu_history
+        if line_color is None:
+            line_color = COLORS["graph_line"]
+        if fill_color is None:
+            fill_color = COLORS["graph_fill"]
         ax.clear()
-        self._style_axis(ax)
-        data = list(self.cpu_history)
+        self._style_axis(ax, ylabel=ylabel, max_len=len(history))
+        data = list(history)
         x = list(range(len(data)))
-        ax.fill_between(x, data, color=COLORS["graph_fill"], alpha=0.15)
-        ax.plot(x, data, color=COLORS["graph_line"], linewidth=1.5)
+        ax.fill_between(x, data, color=fill_color, alpha=0.15)
+        ax.plot(x, data, color=line_color, linewidth=1.5)
         fig.tight_layout(pad=1.5)
         canvas.draw_idle()
 
@@ -747,6 +814,89 @@ class SLRMDashboard:
 
         # Schedule next update
         self.root.after(self.CPU_REFRESH_MS, self._schedule_cpu_update)
+
+    # ══════════════════════════════════════════════════════════════════
+    #  PERIODIC RAM UPDATE
+    # ══════════════════════════════════════════════════════════════════
+    def _schedule_ram_update(self):
+        """Fetch RAM stats and update relevant widgets every second."""
+        try:
+            stats = get_ram_stats()
+            usage = stats["usage"]
+            self.ram_history.append(usage)
+
+            # Update dashboard card
+            ram_card_color = COLORS["accent_red"] if usage > 85.0 else COLORS["accent_green"]
+            self.dash_ram_card.config(text=f"{usage:.1f}%", fg=ram_card_color)
+
+            # Update RAM page labels
+            self.ram_labels["Usage"].config(text=f"{usage:.1f}%")
+            self.ram_labels["Total"].config(text=f"{stats['total_gb']:.2f} GB")
+            self.ram_labels["Used"].config(text=f"{stats['used_gb']:.2f} GB")
+            self.ram_labels["Available"].config(text=f"{stats['available_gb']:.2f} GB")
+
+            # Alert check
+            alert_msg = check_ram_alert(usage)
+            color = COLORS["accent_red"] if "ALERT" in alert_msg else COLORS["accent_green"]
+            self.ram_alert_label.config(text=alert_msg, fg=color)
+
+            # Redraw RAM graph
+            self._update_graph(
+                self.ram_ax, self.ram_canvas, self.ram_fig,
+                history=self.ram_history, ylabel="RAM %",
+                line_color=COLORS["accent_green"], fill_color=COLORS["accent_green"]
+            )
+
+        except Exception as e:
+            print(f"[RAM Update Error] {e}")
+
+        # Schedule next update
+        self.root.after(self.RAM_REFRESH_MS, self._schedule_ram_update)
+
+    # ══════════════════════════════════════════════════════════════════
+    #  PERIODIC DISK UPDATE
+    # ══════════════════════════════════════════════════════════════════
+    def _schedule_disk_update(self):
+        """Fetch Disk stats and update relevant widgets every 5 seconds."""
+        try:
+            stats = get_disk_stats()
+            usage = stats["usage"]
+            self.disk_history.append(usage)
+
+            # Update dashboard card
+            disk_card_color = COLORS["accent_red"] if usage > 90.0 else COLORS["accent_peach"]
+            self.dash_disk_card.config(text=f"{usage:.1f}%", fg=disk_card_color)
+
+            # Update Disk page labels
+            self.disk_labels["Usage"].config(text=f"{usage:.1f}%")
+            self.disk_labels["Total"].config(text=f"{stats['total_gb']:.2f} GB")
+            self.disk_labels["Used"].config(text=f"{stats['used_gb']:.2f} GB")
+            self.disk_labels["Free"].config(text=f"{stats['free_gb']:.2f} GB")
+
+            # Alert check
+            alert_msg = check_disk_alert(usage)
+            color = COLORS["accent_red"] if "ALERT" in alert_msg else COLORS["accent_green"]
+            self.disk_alert_label.config(text=alert_msg, fg=color)
+
+            # Populate Partitions table
+            partitions = get_disk_partitions()
+            self.disk_tree.delete(*self.disk_tree.get_children())
+            for p in partitions:
+                self.disk_tree.insert("", tk.END, values=(
+                    p["device"],
+                    p["mountpoint"],
+                    p["fstype"],
+                    f"{p['total_gb']:.2f}",
+                    f"{p['used_gb']:.2f}",
+                    f"{p['free_gb']:.2f}",
+                    f"{p['usage']:.1f}%",
+                ))
+
+        except Exception as e:
+            print(f"[Disk Update Error] {e}")
+
+        # Schedule next update
+        self.root.after(self.DISK_REFRESH_MS, self._schedule_disk_update)
 
     # ══════════════════════════════════════════════════════════════════
     #  PERIODIC PROCESS UPDATE
