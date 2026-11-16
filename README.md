@@ -16,13 +16,17 @@ SLRM/
 ├── process_manager.py     # Process Management module (Member 3)
 ├── ram_monitor.py         # RAM Monitoring module (Member 2)
 ├── disk_monitor.py        # Disk Monitoring module (Member 2)
+├── system_info.sh         # Linux System Information Bash script (Member 5)
+├── alerts.py              # High Resource Usage Notifications module (Member 5)
+├── reports.py             # Performance Report Generator module (Member 5)
 ├── requirements.txt       # Python dependencies (merged)
-├── requirementsdashboard.txt # Legacy dashboard dependencies (redundant)
 ├── README.md              # Project documentation
 └── tests/                 # Unit tests
     ├── test_process_manager.py
     ├── test_ram_monitor.py
-    └── test_disk_monitor.py
+    ├── test_disk_monitor.py
+    ├── test_alerts.py
+    └── test_reports.py
 ```
 
 ---
@@ -96,6 +100,11 @@ python main.py
 - **RAM Monitoring**: Real-time RAM usage percentage, total, used, and available space in GB, live 60-second RAM usage history graph, and high RAM usage warning alerts (> 85%).
 - **Disk Monitoring**: System root storage statistics (total, used, free space in GB and usage %), low disk space alert (> 90%), and real-time partition table showing device, mountpoint, filesystem, and capacity breakdown.
 
+### Linux System Information, Alerts & Reports
+- **Linux System Info (`system_info.sh`)**: Bash script retrieving hostname, distro/OS version, kernel version, architecture, uptime, CPU model, logical cores, load average, total RAM, root disk summary, active users, and IP address, integrated into Python via `subprocess`.
+- **High Resource Usage Notifications (`alerts.py`)**: Centralized threshold checking across CPU (> 85%), RAM (> 85%), and Disk (> 90%), cooldown-managed alert history, log file persistence, and native Ubuntu desktop notifications via `notify-send`.
+- **Performance Reports (`reports.py`)**: Combines all monitoring modules and Bash system info to generate comprehensive Text (`.txt`) and JSON (`.json`) performance reports with live GUI preview and one-click export.
+
 ---
 
 ## 🔧 Integration Architecture
@@ -161,6 +170,28 @@ from disk_monitor import get_disk_stats, check_disk_alert, get_disk_partitions
 
 ---
 
+## 🐧 Integration Architecture for Linux System Info, Alerts & Reports
+
+Member 5's modules connect the Linux shell environment with the Python monitoring ecosystem:
+
+```python
+from alerts import AlertManager, send_desktop_notification
+from reports import (
+    get_system_info,
+    collect_performance_snapshot,
+    format_text_report,
+    save_text_report,
+    save_json_report,
+)
+```
+
+- **`system_info.sh`**: Supports `--kv` (key-value output for Python `subprocess`), `--pretty` (formatted CLI table), and `--json` output modes.
+- **`get_system_info()`**: Invokes `bash system_info.sh --kv` via `subprocess.run()` with timeout protection and cross-platform fallback, populating the **System Info** tab in the GUI.
+- **`AlertManager` & `send_desktop_notification()`**: Evaluates CPU, RAM, and Disk usage periodically in the GUI, records high-usage events with cooldown throttling, and dispatches native Ubuntu desktop notifications using `notify-send`.
+- **`save_text_report()` & `save_json_report()`**: Aggregates live snapshots from all five modules (`system_info.sh`, `cpu_monitor`, `ram_monitor`, `disk_monitor`, `process_manager`, and `alerts`) and exports structured `.txt` and `.json` reports into the `reports/` directory.
+
+---
+
 ## 🎨 Design
 
 - **Dark charcoal theme** inspired by modern system monitors
@@ -173,12 +204,13 @@ from disk_monitor import get_disk_stats, check_disk_alert, get_disk_partitions
 
 ## 👥 Team
 
-| Member   | Responsibility              |
-|----------|-----------------------------|
-| Member 1 | CPU Monitoring Module       |
-| Member 2 | RAM & Disk Monitoring       |
-| Member 3 | Process Management Module   |
-| Member 4 | GUI & Dashboard Integration |
+| Member   | Responsibility                          |
+|----------|-----------------------------------------|
+| Member 1 | CPU Monitoring Module                   |
+| Member 2 | RAM & Disk Monitoring                   |
+| Member 3 | Process Management Module               |
+| Member 4 | GUI & Dashboard Integration             |
+| Member 5 | Linux Integration, Alerts & Reports     |
 
 ---
 

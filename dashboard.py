@@ -25,6 +25,14 @@ from cpu_monitor import get_cpu_stats, check_cpu_alert
 from process_manager import ProcessManager
 from ram_monitor import get_ram_stats, check_ram_alert
 from disk_monitor import get_disk_stats, check_disk_alert, get_disk_partitions
+from alerts import AlertManager, send_desktop_notification
+from reports import (
+    get_system_info,
+    collect_performance_snapshot,
+    format_text_report,
+    save_text_report,
+    save_json_report,
+)
 
 # ---------------------------------------------------------------------------
 # Color Palette – Dark Theme
@@ -89,6 +97,7 @@ class SLRMDashboard:
     RAM_REFRESH_MS = 1000
     DISK_REFRESH_MS = 5000
     PROCESS_REFRESH_MS = 3000
+    ALERTS_REFRESH_MS = 2000
 
     # ------------------------------------------------------------------
     # Initialisation
@@ -115,6 +124,7 @@ class SLRMDashboard:
                                  maxlen=self.DISK_HISTORY_LEN)
         self.cpu_primed = False  # Track whether first CPU reading is primed
         self.process_manager = ProcessManager()
+        self.alert_manager = AlertManager()
         self.current_sort = "cpu"
         self.process_data_cache = []  # list of process dicts
         self.show_heavy_only = False
@@ -131,6 +141,7 @@ class SLRMDashboard:
         self._schedule_ram_update()
         self._schedule_disk_update()
         self._schedule_process_update()
+        self._schedule_alerts_update()
 
     # ------------------------------------------------------------------
     # Prime CPU measurement
@@ -164,12 +175,14 @@ class SLRMDashboard:
         # Navigation buttons
         self.nav_buttons = {}  # str -> tk.Button
         nav_items = [
-            ("Dashboard",      "📊"),
-            ("CPU Monitoring",  "🖥"),
-            ("RAM Monitoring",  "💾"),
-            ("Disk Monitoring", "💿"),
-            ("Process Manager", "⚙"),
-            ("About",           "ℹ"),
+            ("Dashboard",        "📊"),
+            ("CPU Monitoring",    "🖥"),
+            ("RAM Monitoring",    "💾"),
+            ("Disk Monitoring",   "💿"),
+            ("Process Manager",   "⚙"),
+            ("System Info",       "🐧"),
+            ("Alerts & Reports",  "📋"),
+            ("About",             "ℹ"),
         ]
 
         for label, icon in nav_items:
@@ -214,6 +227,8 @@ class SLRMDashboard:
         self._build_ram_page()
         self._build_disk_page()
         self._build_process_page()
+        self._build_sysinfo_page()
+        self._build_alerts_reports_page()
         self._build_about_page()
 
         # Show Dashboard by default
@@ -696,6 +711,225 @@ class SLRMDashboard:
                                      foreground=COLORS["accent_red"])
 
     # ==================================================================
+    #  PAGE: System Info (Bash Integration via system_info.sh)
+    # ==================================================================
+    def _build_sysinfo_page(self):
+        page = tk.Frame(self.main_area, bg=COLORS["bg_dark"])
+        self.pages["System Info"] = page
+
+        hdr = tk.Frame(page, bg=COLORS["bg_dark"])
+        hdr.pack(fill=tk.X, padx=28, pady=(22, 6))
+        tk.Label(hdr, text="🐧  Linux System Information",
+                 font=("Segoe UI", 22, "bold"),
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(side=tk.LEFT)
+
+        tk.Button(
+            hdr, text="🔄 Refresh System Info", font=("Segoe UI", 10),
+            fg=COLORS["text_primary"], bg=COLORS["accent_blue"],
+            activeforeground=COLORS["text_primary"],
+            activebackground=COLORS["accent_teal"],
+            bd=0, padx=14, pady=5, cursor="hand2",
+            command=self._refresh_sysinfo
+        ).pack(side=tk.RIGHT, padx=8)
+
+        subtitle = tk.Label(
+            page,
+            text="Retrieved via Bash script (system_info.sh) using Python subprocess",
+            font=("Segoe UI", 10), fg=COLORS["text_secondary"], bg=COLORS["bg_dark"]
+        )
+        subtitle.pack(anchor="w", padx=28, pady=(0, 10))
+
+        grid_frame = tk.Frame(page, bg=COLORS["bg_dark"])
+        grid_frame.pack(fill=tk.BOTH, expand=True, padx=24, pady=(4, 24))
+        for col in range(2):
+            grid_frame.columnconfigure(col, weight=1, uniform="sysinfo_col")
+
+        self.sysinfo_labels = {}
+        fields = [
+            ("hostname",       "Hostname",         COLORS["accent_blue"]),
+            ("os_name",        "Operating System", COLORS["accent_green"]),
+            ("kernel",         "Kernel Version",   COLORS["accent_teal"]),
+            ("architecture",   "Architecture",     COLORS["accent_mauve"]),
+            ("uptime",         "System Uptime",    COLORS["accent_peach"]),
+            ("cpu_model",      "CPU Model",        COLORS["accent_blue"]),
+            ("cpu_cores",      "Logical Cores",    COLORS["accent_green"]),
+            ("load_average",   "Load Average",     COLORS["accent_peach"]),
+            ("total_ram",      "Total Memory",     COLORS["accent_teal"]),
+            ("root_disk",      "Root Disk Usage",  COLORS["accent_mauve"]),
+            ("logged_in_user", "Current User",     COLORS["accent_blue"]),
+            ("ip_address",     "IP Address",       COLORS["accent_green"]),
+        ]
+
+        for idx, (key, title, color) in enumerate(fields):
+            r = idx // 2
+            c = idx % 2
+            grid_frame.rowconfigure(r, weight=1)
+            card = tk.Frame(grid_frame, bg=COLORS["bg_card"],
+                            highlightbackground=COLORS["border"],
+                            highlightthickness=1)
+            card.grid(row=r, column=c, padx=8, pady=6, sticky="nsew")
+
+            tk.Label(card, text=title, font=("Segoe UI", 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                     anchor="w").pack(fill=tk.X, padx=16, pady=(10, 2))
+            val_lbl = tk.Label(card, text="—", font=("Segoe UI", 13, "bold"),
+                               fg=color, bg=COLORS["bg_card"], anchor="w")
+            val_lbl.pack(fill=tk.X, padx=16, pady=(0, 10))
+            self.sysinfo_labels[key] = val_lbl
+
+        self._refresh_sysinfo()
+
+    # ==================================================================
+    #  PAGE: Alerts & Reports
+    # ==================================================================
+    def _build_alerts_reports_page(self):
+        page = tk.Frame(self.main_area, bg=COLORS["bg_dark"])
+        self.pages["Alerts & Reports"] = page
+
+        hdr = tk.Frame(page, bg=COLORS["bg_dark"])
+        hdr.pack(fill=tk.X, padx=28, pady=(22, 6))
+        tk.Label(hdr, text="📋  Alerts & Performance Reports",
+                 font=("Segoe UI", 22, "bold"),
+                 fg=COLORS["text_primary"], bg=COLORS["bg_dark"]).pack(side=tk.LEFT)
+
+        # Toolbar for notifications & report exports
+        toolbar = tk.Frame(page, bg=COLORS["bg_dark"])
+        toolbar.pack(fill=tk.X, padx=28, pady=(4, 8))
+
+        self.notify_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            toolbar, text="Ubuntu Desktop Notifications (notify-send)",
+            variable=self.notify_var, font=("Segoe UI", 10),
+            fg=COLORS["text_primary"], bg=COLORS["bg_dark"],
+            selectcolor=COLORS["bg_card"],
+            activeforeground=COLORS["text_primary"],
+            activebackground=COLORS["bg_dark"],
+            bd=0, highlightthickness=0,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+
+        tk.Button(
+            toolbar, text="🔔 Test Alert", font=("Segoe UI", 10),
+            fg=COLORS["text_primary"], bg=COLORS["accent_peach"],
+            bd=0, padx=12, pady=4, cursor="hand2",
+            command=self._on_test_notification
+        ).pack(side=tk.LEFT, padx=4)
+
+        tk.Button(
+            toolbar, text="🗑 Clear Alerts", font=("Segoe UI", 10),
+            fg=COLORS["text_primary"], bg=COLORS["bg_card_hover"],
+            bd=0, padx=12, pady=4, cursor="hand2",
+            command=self._on_clear_alerts
+        ).pack(side=tk.LEFT, padx=4)
+
+        tk.Button(
+            toolbar, text="📦 Export JSON Report", font=("Segoe UI", 10),
+            fg=COLORS["bg_dark"], bg=COLORS["accent_green"],
+            bd=0, padx=12, pady=4, cursor="hand2",
+            command=self._on_export_json_report
+        ).pack(side=tk.RIGHT, padx=4)
+
+        tk.Button(
+            toolbar, text="📄 Export TXT Report", font=("Segoe UI", 10),
+            fg=COLORS["bg_dark"], bg=COLORS["accent_blue"],
+            bd=0, padx=12, pady=4, cursor="hand2",
+            command=self._on_export_txt_report
+        ).pack(side=tk.RIGHT, padx=4)
+
+        tk.Button(
+            toolbar, text="🔄 Preview Report", font=("Segoe UI", 10),
+            fg=COLORS["text_primary"], bg=COLORS["accent_mauve"],
+            bd=0, padx=12, pady=4, cursor="hand2",
+            command=self._refresh_report_preview
+        ).pack(side=tk.RIGHT, padx=4)
+
+        # Upper section: Alert History Treeview
+        alerts_card = tk.Frame(page, bg=COLORS["bg_card"],
+                               highlightbackground=COLORS["border"],
+                               highlightthickness=1)
+        alerts_card.pack(fill=tk.BOTH, expand=False, padx=28, pady=(4, 10))
+
+        tk.Label(alerts_card, text="  🚨  High Resource Usage Alert Log",
+                 font=("Segoe UI", 12, "bold"),
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                 anchor="w").pack(fill=tk.X, padx=16, pady=(10, 6))
+
+        alert_cols = ("timestamp", "severity", "resource", "usage", "threshold", "message")
+        alert_headings = {
+            "timestamp": "Timestamp",
+            "severity":  "Severity",
+            "resource":  "Resource",
+            "usage":     "Usage %",
+            "threshold": "Threshold %",
+            "message":   "Alert Details",
+        }
+        alert_widths = {
+            "timestamp": 150, "severity": 90, "resource": 80,
+            "usage": 80, "threshold": 95, "message": 420,
+        }
+
+        alert_table_frame = tk.Frame(alerts_card, bg=COLORS["bg_card"])
+        alert_table_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 10))
+
+        self.alert_tree = ttk.Treeview(
+            alert_table_frame, columns=alert_cols, show="headings",
+            style="Dark.Treeview", selectmode="browse", height=5)
+
+        for col in alert_cols:
+            self.alert_tree.heading(col, text=alert_headings[col])
+            anchor = "w" if col in ("timestamp", "message") else "center"
+            self.alert_tree.column(col, width=alert_widths[col], anchor=anchor, minwidth=60)
+
+        alert_scroll = ttk.Scrollbar(alert_table_frame, orient=tk.VERTICAL,
+                                     command=self.alert_tree.yview)
+        self.alert_tree.configure(yscrollcommand=alert_scroll.set)
+        alert_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.alert_tree.pack(fill=tk.BOTH, expand=True)
+
+        self.alert_tree.tag_configure(
+            "CRITICAL", background="#4a2030", foreground=COLORS["accent_red"]
+        )
+        self.alert_tree.tag_configure(
+            "WARNING", background="#3b2e2a", foreground=COLORS["accent_peach"]
+        )
+        self.alert_tree.tag_configure(
+            "INFO", background=COLORS["bg_card"], foreground=COLORS["accent_teal"]
+        )
+
+        # Lower section: Performance Report Preview
+        report_card = tk.Frame(page, bg=COLORS["bg_card"],
+                               highlightbackground=COLORS["border"],
+                               highlightthickness=1)
+        report_card.pack(fill=tk.BOTH, expand=True, padx=28, pady=(0, 22))
+
+        tk.Label(report_card, text="  📊  Performance Report Preview",
+                 font=("Segoe UI", 12, "bold"),
+                 fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                 anchor="w").pack(fill=tk.X, padx=16, pady=(10, 6))
+
+        preview_container = tk.Frame(report_card, bg=COLORS["bg_card"])
+        preview_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+
+        self.report_text_widget = tk.Text(
+            preview_container,
+            bg=COLORS["bg_dark"],
+            fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+            font=("TkFixedFont", 10),
+            bd=0,
+            highlightthickness=0,
+            padx=12,
+            pady=10,
+            wrap=tk.NONE,
+        )
+        rep_scroll = ttk.Scrollbar(preview_container, orient=tk.VERTICAL,
+                                   command=self.report_text_widget.yview)
+        self.report_text_widget.configure(yscrollcommand=rep_scroll.set)
+        rep_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.report_text_widget.pack(fill=tk.BOTH, expand=True)
+
+        self._refresh_report_preview()
+
+    # ==================================================================
     #  PAGE: About
     # ==================================================================
     def _build_about_page(self):
@@ -722,16 +956,17 @@ class SLRMDashboard:
         info_text = (
             "\n"
             "A comprehensive system resource monitoring dashboard\n"
-            "built with Python, Tkinter, and Matplotlib.\n\n"
+            "built with Python, Tkinter, Matplotlib, and Bash.\n\n"
             "Semester 4 Final Project  –  Operating Systems\n\n"
             "──────────────────────────────────────\n\n"
             "Team Contributions:\n\n"
             "   Member 1  –  CPU Monitoring Module\n"
             "   Member 2  –  RAM & Disk Monitoring Module\n"
             "   Member 3  –  Process Management Module\n"
-            "   Member 4  –  GUI & Dashboard Integration\n\n"
+            "   Member 4  –  GUI & Dashboard Integration\n"
+            "   Member 5  –  Linux Integration, Alerts & Reports\n\n"
             "──────────────────────────────────────\n\n"
-            "Technologies:  Python 3 · Tkinter · Matplotlib · psutil\n"
+            "Technologies:  Python 3 · Bash · Subprocess · Tkinter · Matplotlib · psutil\n"
             "Target OS:     Ubuntu Linux\n"
         )
         tk.Label(card, text=info_text, font=("Segoe UI", 11),
@@ -1032,3 +1267,114 @@ class SLRMDashboard:
 
         # Refresh process list
         self._refresh_processes()
+
+    # ══════════════════════════════════════════════════════════════════
+    #  LINUX SYSTEM INFO, ALERTS & REPORTS (MEMBER 5)
+    # ══════════════════════════════════════════════════════════════════
+    def _refresh_sysinfo(self):
+        """Fetch system info via system_info.sh and update System Info labels."""
+        try:
+            info = get_system_info()
+            for key, lbl in self.sysinfo_labels.items():
+                lbl.config(text=str(info.get(key, "N/A")))
+        except Exception as e:
+            print(f"[System Info Error] {e}")
+
+    def _schedule_alerts_update(self):
+        """Periodically evaluate system alerts and update the Alert History table."""
+        try:
+            cpu_val = self.cpu_history[-1] if self.cpu_history else None
+            ram_val = self.ram_history[-1] if self.ram_history else None
+            disk_val = self.disk_history[-1] if self.disk_history else None
+
+            notify_enabled = bool(self.notify_var.get()) if hasattr(self, "notify_var") else False
+            self.alert_manager.evaluate(
+                cpu_usage=cpu_val,
+                ram_usage=ram_val,
+                disk_usage=disk_val,
+                notify_desktop=notify_enabled,
+            )
+            self._refresh_alerts_table()
+        except Exception as e:
+            print(f"[Alerts Update Error] {e}")
+
+        self.root.after(self.ALERTS_REFRESH_MS, self._schedule_alerts_update)
+
+    def _refresh_alerts_table(self):
+        """Repopulate the Alert History Treeview from AlertManager."""
+        if not hasattr(self, "alert_tree"):
+            return
+        self.alert_tree.delete(*self.alert_tree.get_children())
+        for alert in self.alert_manager.get_history():
+            sev = alert.get("severity", "WARNING")
+            tag = (sev,) if sev in ("CRITICAL", "WARNING", "INFO") else ()
+            self.alert_tree.insert("", tk.END, values=(
+                alert.get("timestamp", ""),
+                sev,
+                alert.get("resource", ""),
+                f"{alert.get('usage', 0.0):.1f}%",
+                f"{alert.get('threshold', 0.0):.1f}%",
+                alert.get("message", ""),
+            ), tags=tag)
+
+    def _on_test_notification(self):
+        """Trigger a test alert notification and record it in the alert log."""
+        res = send_desktop_notification(
+            title="SLRM Test Alert",
+            message="High resource usage notification system is active.",
+            urgency="normal",
+        )
+        from datetime import datetime
+        self.alert_manager.history.appendleft({
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "severity": "INFO",
+            "resource": "Test",
+            "usage": 0.0,
+            "threshold": 85.0,
+            "message": res["message"],
+        })
+        self._refresh_alerts_table()
+        messagebox.showinfo("Alert Notification Test", res["message"])
+
+    def _on_clear_alerts(self):
+        """Clear alert history."""
+        self.alert_manager.clear_history()
+        self._refresh_alerts_table()
+
+    def _refresh_report_preview(self):
+        """Generate a live performance report preview in the text widget."""
+        if not hasattr(self, "report_text_widget"):
+            return
+        try:
+            snapshot = collect_performance_snapshot(top_n_processes=10)
+            text = format_text_report(snapshot)
+            self.report_text_widget.config(state=tk.NORMAL)
+            self.report_text_widget.delete("1.0", tk.END)
+            self.report_text_widget.insert(tk.END, text)
+            self.report_text_widget.config(state=tk.DISABLED)
+        except Exception as e:
+            print(f"[Report Preview Error] {e}")
+
+    def _on_export_txt_report(self):
+        """Export a plain-text (.txt) performance report and notify the user."""
+        try:
+            saved_path = save_text_report()
+            self._refresh_report_preview()
+            messagebox.showinfo(
+                "TXT Report Exported",
+                f"Performance report saved successfully:\n\n{saved_path}"
+            )
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not save TXT report:\n{e}")
+
+    def _on_export_json_report(self):
+        """Export a JSON (.json) performance report and notify the user."""
+        try:
+            saved_path = save_json_report()
+            messagebox.showinfo(
+                "JSON Report Exported",
+                f"JSON performance report saved successfully:\n\n{saved_path}"
+            )
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not save JSON report:\n{e}")
+
